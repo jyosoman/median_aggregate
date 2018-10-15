@@ -8,7 +8,7 @@
 #include "parser/parse_oper.h"
 #include "utils/builtins.h"
 #include "utils/tuplesort.h"
-
+#include "utils/datum.h"
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -125,7 +125,7 @@ median_finalfn(PG_FUNCTION_ARGS) {
         Datum value;
         bool isNull;
         int i = 1;
-        Datum result;
+        Datum result=0;
 
         hidx = aggstate->nelems / 2 + 1;
         lidx = (aggstate->nelems + 1) / 2;
@@ -136,7 +136,7 @@ median_finalfn(PG_FUNCTION_ARGS) {
                                   true,
                                   &value, &isNull,NULL)) {
             if (i++ == lidx) {
-                result=DatumCopy(value,false,-1);
+                result=datumCopy(value,true,-1);
 //                result = to_double(value, &aggstate->cast_func_finfo);
 
                 if (lidx != hidx) {
