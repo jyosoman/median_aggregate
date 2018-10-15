@@ -10,6 +10,7 @@
 #include "utils/tuplesort.h"
 #include "utils/datum.h"
 #include "parser/parse_type.h"
+#include "utils/syscache.h"
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
@@ -21,59 +22,9 @@ PG_FUNCTION_INFO_V1(median_finalfn);
 typedef struct {
     int nelems;        /* number of valid entries */
     Tuplesortstate *sortstate;
-    FmgrInfo cast_func_finfo;
     Oid valtype;
-    int p;        /* nth for percentille */
 } StatAggState;
 
-static StatAggState *
-makeStatAggState(FunctionCallInfo fcinfo) {
-    MemoryContext oldctx;
-    MemoryContext aggcontext;
-    StatAggState *aggstate;
-    Oid sortop, castfunc;
-    Oid valtype;
-//    Oid sortCollation;
-    CoercionPathType pathtype;
-
-    if (!AggCheckCallContext(fcinfo, &aggcontext)) {
-        /* cannot be called directly because of internal-type argument */
-        elog(ERROR, "string_agg_transfn called in non-aggregate context");
-    }
-
-    oldctx = MemoryContextSwitchTo(aggcontext);
-
-    aggstate = (StatAggState *) palloc(sizeof(StatAggState));
-    aggstate->nelems = 0;
-
-    valtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
-    aggstate->valtype=valtype;
-    get_sort_group_operators(valtype, true, false, false, &sortop, NULL, NULL, NULL);
-
-    aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, InvalidOid,SORTBY_NULLS_DEFAULT, work_mem, false);
-
-    MemoryContextSwitchTo(oldctx);
-
-    if (valtype != FLOAT8OID) {
-        /* find a cast function */
-
-        pathtype = find_coercion_pathway(FLOAT8OID, valtype,
-                                         COERCION_EXPLICIT,
-                                         &castfunc);
-        if (pathtype == COERCION_PATH_FUNC) {
-            Assert(OidIsValid(castfunc));
-            fmgr_info_cxt(castfunc, &aggstate->cast_func_finfo,
-                          aggcontext);
-        } else if (pathtype == COERCION_PATH_RELABELTYPE) {
-            aggstate->cast_func_finfo.fn_oid = InvalidOid;
-        } else
-            elog(ERROR, "no conversion function from %s %s",
-                 format_type_be(valtype),
-                 format_type_be(FLOAT8OID));
-    }
-
-    return aggstate;
-}
 
 /*
  * Median state transfer function.
@@ -84,12 +35,7 @@ makeStatAggState(FunctionCallInfo fcinfo) {
  */
 Datum
 median_transfn(PG_FUNCTION_ARGS) {
-//    MemoryContext agg_context;
 
-//    if (!AggCheckCallContext(fcinfo, &agg_context))
-//        elog(ERROR, "median_transfn called in non-aggregate context");
-
-//    PG_RETURN_NULL();
     StatAggState *aggstate;
 
     aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
@@ -98,9 +44,10 @@ median_transfn(PG_FUNCTION_ARGS) {
         if (aggstate == NULL){
             MemoryContext oldctx;
             MemoryContext aggcontext;
-            Oid sortop, castfunc;
+            Oid sortop;
             Oid valtype;
-            CoercionPathType pathtype;
+            Type t;
+            Oid collation;
 
             if (!AggCheckCallContext(fcinfo, &aggcontext)) {
                 /* cannot be called directly because of internal-type argument */
@@ -116,11 +63,13 @@ median_transfn(PG_FUNCTION_ARGS) {
             aggstate->valtype=valtype;
             get_sort_group_operators(valtype, true, false, false, &sortop, NULL, NULL, NULL);
 
-            aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, typeTypeCollation(typeidType(valtype)),SORTBY_NULLS_DEFAULT, work_mem, false);
+            t=typeidType(valtype);
+            collation=typeTypeCollation(t);
+            ReleaseSysCache(t);
+            aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, collation,SORTBY_NULLS_DEFAULT, work_mem, false);
 
             MemoryContextSwitchTo(oldctx);
         }
-
         tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
         aggstate->nelems++;
     }
@@ -128,7 +77,13 @@ median_transfn(PG_FUNCTION_ARGS) {
     PG_RETURN_POINTER(aggstate);
 }
 
-
+/*
+ * Median final function.
+ *
+ * This function is called after all values in the median set has been
+ * processed by the state transfer function. It should perform any necessary
+ * post processing and clean up any temporary state.
+ */
 
 Datum
 median_finalfn(PG_FUNCTION_ARGS) {
@@ -198,20 +153,5 @@ median_finalfn(PG_FUNCTION_ARGS) {
         PG_RETURN_NULL();
 }
 
-/*
- * Median final function.
- *
- * This function is called after all values in the median set has been
- * processed by the state transfer function. It should perform any necessary
- * post processing and clean up any temporary state.
- */
-//Datum
-//median_finalfn(PG_FUNCTION_ARGS)
-//{
-//    MemoryContext agg_context;
-//
-//    if (!AggCheckCallContext(fcinfo, &agg_context))
-//        elog(ERROR, "median_finalfn called in non-aggregate context");
-//
-//    PG_RETURN_NULL();
-//}
+
+
