@@ -9,7 +9,7 @@
 #include "utils/builtins.h"
 #include "utils/tuplesort.h"
 #include "utils/datum.h"
-
+#include "parser/parse_type.h"
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
@@ -22,6 +22,7 @@ typedef struct {
     int nelems;        /* number of valid entries */
     Tuplesortstate *sortstate;
     FmgrInfo cast_func_finfo;
+    Oid valtype;
     int p;        /* nth for percentille */
 } StatAggState;
 
@@ -46,6 +47,7 @@ makeStatAggState(FunctionCallInfo fcinfo) {
     aggstate->nelems = 0;
 
     valtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    aggstate->valtype=valtype;
     get_sort_group_operators(valtype, true, false, false, &sortop, NULL, NULL, NULL);
 
     aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, InvalidOid,SORTBY_NULLS_DEFAULT, work_mem, false);
@@ -93,8 +95,31 @@ median_transfn(PG_FUNCTION_ARGS) {
     aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
 
     if (!PG_ARGISNULL(1)) {
-        if (aggstate == NULL)
-            aggstate = makeStatAggState(fcinfo);
+        if (aggstate == NULL){
+            MemoryContext oldctx;
+            MemoryContext aggcontext;
+            Oid sortop, castfunc;
+            Oid valtype;
+            CoercionPathType pathtype;
+
+            if (!AggCheckCallContext(fcinfo, &aggcontext)) {
+                /* cannot be called directly because of internal-type argument */
+                elog(ERROR, "string_agg_transfn called in non-aggregate context");
+            }
+
+            oldctx = MemoryContextSwitchTo(aggcontext);
+
+            aggstate = (StatAggState *) palloc(sizeof(StatAggState));
+            aggstate->nelems = 0;
+
+            valtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
+            aggstate->valtype=valtype;
+            get_sort_group_operators(valtype, true, false, false, &sortop, NULL, NULL, NULL);
+
+            aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, typeTypeCollation(typeidType(valtype)),SORTBY_NULLS_DEFAULT, work_mem, false);
+
+            MemoryContextSwitchTo(oldctx);
+        }
 
         tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
         aggstate->nelems++;
@@ -103,13 +128,7 @@ median_transfn(PG_FUNCTION_ARGS) {
     PG_RETURN_POINTER(aggstate);
 }
 
-static double
-to_double(Datum value, FmgrInfo *cast_func_finfo) {
-    if (cast_func_finfo->fn_oid != InvalidOid) {
-        return DatumGetFloat8(FunctionCall1(cast_func_finfo, value));
-    } else
-        return DatumGetFloat8(value);
-}
+
 
 Datum
 median_finalfn(PG_FUNCTION_ARGS) {
@@ -136,15 +155,37 @@ median_finalfn(PG_FUNCTION_ARGS) {
                                   true,
                                   &value, &isNull,NULL)) {
             if (i++ == lidx) {
-                result=datumCopy(value,true,-1);
-//                result = to_double(value, &aggstate->cast_func_finfo);
+                if (aggstate->valtype != CSTRINGOID && aggstate->valtype != VARCHAROID) {
+                    result = datumCopy(value, true, -1);
+                }else{
+                    result=datumCopy(value,false,0);
+                }
 
                 if (lidx != hidx) {
                     tuplesort_getdatum(aggstate->sortstate,
                                        true,
                                        &value, &isNull,NULL);
+                    switch (aggstate->valtype){
+                        case (INT8OID):
+                            result = (DatumGetInt64(result) + DatumGetInt64(value)) / 2.0;
+                            break;
+                        case (INT4OID):
+                            result = (DatumGetInt32(result) + DatumGetInt32(value)) / 2.0;
+                            break;
+                        case (INT2OID):
+                            result = (DatumGetInt32(result) + DatumGetInt32(value)) / 2.0;
+                            break;
+                        case (FLOAT4OID):
+                            result = (DatumGetFloat4(result) + DatumGetFloat4(value)) / 2.0;
+                            break;
+                        case (FLOAT8OID):
+                            result = (DatumGetFloat8(result) + DatumGetFloat8(value)) / 2.0;
+                            break;
 
-                    result = (result + to_double(value, &aggstate->cast_func_finfo)) / 2.0;
+                        default:
+                            break;
+                    }
+
                 }
                 break;
             }
