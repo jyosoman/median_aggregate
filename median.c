@@ -15,6 +15,9 @@
 PG_MODULE_MAGIC;
 #endif
 
+/*
+ * Source modified from the patch submitted by Pavel Stehule to postgres in Aug 2010.
+ */
 PG_FUNCTION_INFO_V1(median_transfn);
 
 PG_FUNCTION_INFO_V1(median_finalfn);
