@@ -54,8 +54,8 @@ typedef struct
 /* Forward declarations*/
 void		sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo);
 StatAggState *state_initialise(FunctionCallInfo);
-int partition(RawData *, int, int);
-Datum quick_select(RawData *, int, int, int);
+int			partition(RawData *, int, int);
+Datum		quick_select(RawData *, int, int, int);
 
 /*
  * Helper function for quick_select
