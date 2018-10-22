@@ -41,51 +41,86 @@ typedef struct{
 }RawData;
 
 typedef struct {
-    int nelems;        /* number of valid entries */
+    int nelems;             /* number of valid entries */
     Tuplesortstate *sortstate;
-    Oid valtype;
+    Oid valtype;            /* Type of data */
     bool inmemory;
-    RawData* rawData;
-    bool isTuple;
+    RawData* rawData;       /* Store for inmemory processing*/
+    bool isTuple;           /*To check if the data is a tuple or not */
 } StatAggState;
 
+/* Forward declarations*/
 void sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo);
 StatAggState *state_initialise(FunctionCallInfo);
 int partition(RawData* , int , int ) ;
 Datum quick_select(RawData* , int , int , int ) ;
 
+/*
+ * Helper function for quick_select
+ * Splits data into two chunks, one less than pivot, other greater than
+ * TODO: Need to find comparator functions for operators. Currently only numerics are supported.
+ */
 
-int partition(RawData* input, int leftIndex, int rightIndex) {
-    Datum pivot = input[rightIndex].datum;
+int partition(RawData* input, int left_index, int right_index)
+{
+    Datum pivot = input[right_index].datum;
 
-    while ( leftIndex < rightIndex )
+    while ( left_index < right_index )
     {
-        while ( input[leftIndex].datum < pivot )
-            leftIndex++;
+        while ( input[left_index].datum < pivot )
+        {
+            left_index++;
+        }
 
-        while ( input[rightIndex].datum > pivot )
-            rightIndex--;
+        while ( input[right_index].datum > pivot )
+        {
+            right_index--;
+        }
 
-        if ( input[leftIndex].datum == input[rightIndex].datum )
-            leftIndex++;
-        else if ( leftIndex < rightIndex ) {
-            Datum tmp = input[leftIndex].datum;
-            input[leftIndex].datum = input[rightIndex].datum;
-            input[rightIndex].datum = tmp;
+        if ( input[left_index].datum == input[right_index].datum )
+        {
+            left_index++;
+        }
+        else if ( left_index < right_index )
+        {
+            Datum tmp = input[left_index].datum;
+            input[left_index].datum = input[right_index].datum;
+            input[right_index].datum = tmp;
         }
     }
 
-    return rightIndex;
+    return right_index;
 }
 
-Datum quick_select(RawData* input, int leftIndex, int rightIndex, int center) {
+/*
+ *
+ *
+ */
+Datum quick_select(RawData* input, int left_index, int right_index, int center)
+{
     int partitionIndex, length;
-    if ( leftIndex == rightIndex ) return input[leftIndex].datum;
-    partitionIndex = partition(input, leftIndex, rightIndex);
-    length = partitionIndex - leftIndex + 1;
-    if ( length == center ) return input[partitionIndex].datum;
-    else if ( center < length ) return quick_select(input, leftIndex, partitionIndex - 1, center);
-    else  return quick_select(input, partitionIndex + 1, rightIndex, center - length);
+
+    if ( left_index == right_index )
+    {
+        return input[left_index].datum;
+    }
+
+    partitionIndex = partition(input, left_index, right_index);
+
+    length = partitionIndex - left_index + 1;
+
+    if ( length == center )
+    {
+        return input[partitionIndex].datum;
+    }
+    else if ( center < length )
+    {
+        return quick_select(input, left_index, partitionIndex - 1, center);
+    }
+    else
+    {
+        return quick_select(input, partitionIndex + 1, right_index, center - length);
+    }
 }
 
 /*
@@ -99,7 +134,8 @@ void sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo){
     Type t;
     MemoryContext oldctx;
     MemoryContext aggcontext;
-    if (!AggCheckCallContext(fcinfo, &aggcontext)) {
+    if (!AggCheckCallContext(fcinfo, &aggcontext))
+    {
         /* cannot be called directly because of internal-type argument */
         elog(ERROR, "string_agg_transfn called in non-aggregate context");
     }
@@ -139,7 +175,8 @@ void sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo){
     aggstate->inmemory=true;
 
     aggstate->valtype=get_fn_expr_argtype(fcinfo->flinfo, 1);
-    switch (aggstate->valtype) {
+    switch (aggstate->valtype)
+    {
         case (INT8OID):
             break;
         case (INT4OID):
@@ -159,7 +196,9 @@ void sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo){
     aggstate->sortstate=NULL;
     aggstate->rawData=NULL;
     if(aggstate->inmemory)
+    {
         aggstate->rawData =palloc(INMEMORYCAPACITY* sizeof(RawData));
+    }
 
     MemoryContextSwitchTo(oldctx);
 
@@ -174,36 +213,46 @@ void sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo){
  */
 
 Datum
-median_transfn(PG_FUNCTION_ARGS) {
+median_transfn(PG_FUNCTION_ARGS)
+{
      int iterator;
 
     StatAggState *aggstate;
 
     aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
 
-    if (!PG_ARGISNULL(1)) {
-        if (aggstate == NULL){
+    if (!PG_ARGISNULL(1))
+    {
+        if (aggstate == NULL)
+        {
             aggstate=state_initialise(fcinfo);
             sort_state_initialise(aggstate,fcinfo);
         }
-        if(aggstate->inmemory){
-            if(aggstate->nelems==INMEMORYCAPACITY){
+        if(aggstate->inmemory)
+        {
+            if(aggstate->nelems==INMEMORYCAPACITY)
+            {
                 aggstate->inmemory=false;
                 iterator=0;
-                for(iterator=0;iterator<aggstate->nelems;iterator++){
+                for(iterator=0;iterator<aggstate->nelems;iterator++)
+                {
                     tuplesort_putdatum(aggstate->sortstate, aggstate->rawData[iterator].datum, false);
                 }
-            }else{
+            }else
+                {
                 aggstate->rawData[aggstate->nelems].datum = PG_GETARG_DATUM(1);
-                if(!aggstate->isTuple){
+                if(!aggstate->isTuple)
+                {
                     aggstate->rawData[aggstate->nelems].tuple=DatumGetPointer(aggstate->rawData[aggstate->nelems].datum);
-                }else{
+                }else
+                    {
                     aggstate->rawData[aggstate->nelems].tuple=NULL;
                 }
             }
 //            tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
             aggstate->nelems++;
-        }else{
+        }else
+            {
             tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
             aggstate->nelems++;
         }
@@ -228,7 +277,8 @@ median_finalfn(PG_FUNCTION_ARGS) {
 
     aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
 
-    if (aggstate != NULL) {
+    if (aggstate != NULL)
+    {
         int lidx;
         int hidx;
         Datum value;
@@ -237,17 +287,24 @@ median_finalfn(PG_FUNCTION_ARGS) {
         Datum result=0;
         hidx = aggstate->nelems / 2 + 1;
         lidx = (aggstate->nelems + 1) / 2;
-        if(aggstate->inmemory){
+        if(aggstate->inmemory)
+        {
             result=quick_select(aggstate->rawData, 0, aggstate->nelems, lidx);
             if(aggstate->nelems>1)
+            {
                 value=quick_select(aggstate->rawData, 0, aggstate->nelems, lidx+1);
-        } else {
+            }
+        } else
+            {
             tuplesort_performsort(aggstate->sortstate);
             while (tuplesort_getdatum(aggstate->sortstate,
                                       true,
-                                      &value, &isNull, NULL)) {
-                if (i++ == lidx) {
-                    if (aggstate->valtype != CSTRINGOID && aggstate->valtype != VARCHAROID) {
+                                      &value, &isNull, NULL))
+            {
+                if (i++ == lidx)
+                {
+                    if (aggstate->valtype != CSTRINGOID && aggstate->valtype != VARCHAROID)
+                    {
                         result = datumCopy(value, true, -1);
                     } else {
                         result = datumCopy(value, false, 0);
@@ -259,8 +316,10 @@ median_finalfn(PG_FUNCTION_ARGS) {
                 }
             }
         }
-        if (lidx != hidx) {
-            switch (aggstate->valtype) {
+        if (lidx != hidx)
+        {
+            switch (aggstate->valtype)
+            {
                 case (INT8OID):
                     result = (DatumGetInt64(result) + DatumGetInt64(value)) / 2.0;
                     break;
@@ -283,7 +342,8 @@ median_finalfn(PG_FUNCTION_ARGS) {
 
         }
         tuplesort_end(aggstate->sortstate);
-        if(aggstate->rawData!=NULL){
+        if(aggstate->rawData!=NULL)
+        {
             pfree(aggstate->rawData);
         }
         PG_RETURN_DATUM(result);
