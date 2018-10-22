@@ -22,10 +22,11 @@ PG_FUNCTION_INFO_V1(median_transfn);
 
 PG_FUNCTION_INFO_V1(median_finalfn);
 
-typedef struct {
-    int nelems;        /* number of valid entries */
-    Tuplesortstate *sortstate;
-    Oid valtype;
+typedef struct
+{
+	int			nelems;			/* number of valid entries */
+	Tuplesortstate *sortstate;
+	Oid			valtype;
 } StatAggState;
 
 
@@ -37,47 +38,51 @@ typedef struct {
  * initialized.
  */
 Datum
-median_transfn(PG_FUNCTION_ARGS) {
+median_transfn(PG_FUNCTION_ARGS)
+{
 
-    StatAggState *aggstate;
+	StatAggState *aggstate;
 
-    aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
+	aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
 
-    if (!PG_ARGISNULL(1)) {
-        if (aggstate == NULL){
-            MemoryContext oldctx;
-            MemoryContext aggcontext;
-            Oid sortop;
-            Oid valtype;
-            Type t;
-            Oid collation;
+	if (!PG_ARGISNULL(1))
+	{
+		if (aggstate == NULL)
+		{
+			MemoryContext oldctx;
+			MemoryContext aggcontext;
+			Oid			sortop;
+			Oid			valtype;
+			Type		t;
+			Oid			collation;
 
-            if (!AggCheckCallContext(fcinfo, &aggcontext)) {
-                /* cannot be called directly because of internal-type argument */
-                elog(ERROR, "string_agg_transfn called in non-aggregate context");
-            }
+			if (!AggCheckCallContext(fcinfo, &aggcontext))
+			{
+				/* cannot be called directly because of internal-type argument */
+				elog(ERROR, "string_agg_transfn called in non-aggregate context");
+			}
 
-            oldctx = MemoryContextSwitchTo(aggcontext);
+			oldctx = MemoryContextSwitchTo(aggcontext);
 
-            aggstate = (StatAggState *) palloc(sizeof(StatAggState));
-            aggstate->nelems = 0;
+			aggstate = (StatAggState *) palloc(sizeof(StatAggState));
+			aggstate->nelems = 0;
 
-            valtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
-            aggstate->valtype=valtype;
-            get_sort_group_operators(valtype, true, false, false, &sortop, NULL, NULL, NULL);
+			valtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
+			aggstate->valtype = valtype;
+			get_sort_group_operators(valtype, true, false, false, &sortop, NULL, NULL, NULL);
 
-            t=typeidType(valtype);
-            collation=typeTypeCollation(t);
-            ReleaseSysCache(t);
-            aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, collation,SORTBY_NULLS_DEFAULT, work_mem, false);
+			t = typeidType(valtype);
+			collation = typeTypeCollation(t);
+			ReleaseSysCache(t);
+			aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, collation, SORTBY_NULLS_DEFAULT, work_mem, false);
 
-            MemoryContextSwitchTo(oldctx);
-        }
-        tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
-        aggstate->nelems++;
-    }
+			MemoryContextSwitchTo(oldctx);
+		}
+		tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
+		aggstate->nelems++;
+	}
 
-    PG_RETURN_POINTER(aggstate);
+	PG_RETURN_POINTER(aggstate);
 }
 
 /*
@@ -89,72 +94,79 @@ median_transfn(PG_FUNCTION_ARGS) {
  */
 
 Datum
-median_finalfn(PG_FUNCTION_ARGS) {
-    StatAggState *aggstate;
+median_finalfn(PG_FUNCTION_ARGS)
+{
+	StatAggState *aggstate;
 
-    Assert(AggCheckCallContext(fcinfo, NULL));
+	Assert(AggCheckCallContext(fcinfo, NULL));
 
-    aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
+	aggstate = PG_ARGISNULL(0) ? NULL : (StatAggState *) PG_GETARG_POINTER(0);
 
-    if (aggstate != NULL) {
-        int lidx;
-        int hidx;
-        Datum value;
-        bool isNull;
-        int i = 1;
-        Datum result=0;
+	if (aggstate != NULL)
+	{
+		int			lidx;
+		int			hidx;
+		Datum		value;
+		bool		isNull;
+		int			i = 1;
+		Datum		result = 0;
 
-        hidx = aggstate->nelems / 2 + 1;
-        lidx = (aggstate->nelems + 1) / 2;
+		hidx = aggstate->nelems / 2 + 1;
+		lidx = (aggstate->nelems + 1) / 2;
 
-        tuplesort_performsort(aggstate->sortstate);
+		tuplesort_performsort(aggstate->sortstate);
 
-        while (tuplesort_getdatum(aggstate->sortstate,
-                                  true,
-                                  &value, &isNull,NULL)) {
-            if (i++ == lidx) {
-                if (aggstate->valtype != CSTRINGOID && aggstate->valtype != VARCHAROID) {
-                    result = datumCopy(value, true, -1);
-                }else{
-                    result=datumCopy(value,false,0);
-                }
+		while (tuplesort_getdatum(aggstate->sortstate,
+								  true,
+								  &value, &isNull, NULL))
+		{
+			if (i++ == lidx)
+			{
+				if (aggstate->valtype != CSTRINGOID && aggstate->valtype != VARCHAROID)
+				{
+					result = datumCopy(value, true, -1);
+				}
+				else
+				{
+					result = datumCopy(value, false, 0);
+				}
 
-                if (lidx != hidx) {
-                    tuplesort_getdatum(aggstate->sortstate,
-                                       true,
-                                       &value, &isNull,NULL);
-                    switch (aggstate->valtype){
-                        case (INT8OID):
-                            result = (DatumGetInt64(result) + DatumGetInt64(value)) / 2.0;
-                            break;
-                        case (INT4OID):
-                            result = (DatumGetInt32(result) + DatumGetInt32(value)) / 2.0;
-                            break;
-                        case (INT2OID):
-                            result = (DatumGetInt32(result) + DatumGetInt32(value)) / 2.0;
-                            break;
-                        case (FLOAT4OID):
-                            result = (DatumGetFloat4(result) + DatumGetFloat4(value)) / 2.0;
-                            break;
-                        case (FLOAT8OID):
-                            result = (DatumGetFloat8(result) + DatumGetFloat8(value)) / 2.0;
-                            break;
+				if (lidx != hidx)
+				{
+					tuplesort_getdatum(aggstate->sortstate,
+									   true,
+									   &value, &isNull, NULL);
+					switch (aggstate->valtype)
+					{
+						case (INT8OID):
+							result = (DatumGetInt64(result) + DatumGetInt64(value)) / 2.0;
+							break;
+						case (INT4OID):
+							result = (DatumGetInt32(result) + DatumGetInt32(value)) / 2.0;
+							break;
+						case (INT2OID):
+							result = (DatumGetInt32(result) + DatumGetInt32(value)) / 2.0;
+							break;
+						case (FLOAT4OID):
+							result = (DatumGetFloat4(result) + DatumGetFloat4(value)) / 2.0;
+							break;
+						case (FLOAT8OID):
+							result = (DatumGetFloat8(result) + DatumGetFloat8(value)) / 2.0;
+							break;
 
-                        default:
-                            break;
-                    }
+						default:
+							break;
+					}
 
-                }
-                break;
-            }
-        }
+				}
+				break;
+			}
+		}
 
-        tuplesort_end(aggstate->sortstate);
+		tuplesort_end(aggstate->sortstate);
 
-        PG_RETURN_DATUM(result);
-    } else
-        PG_RETURN_NULL();
+		PG_RETURN_DATUM(result);
+	}
+	else
+		PG_RETURN_NULL();
 }
-
-
-
