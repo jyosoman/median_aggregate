@@ -22,12 +22,38 @@ PG_FUNCTION_INFO_V1(median_transfn);
 
 PG_FUNCTION_INFO_V1(median_finalfn);
 
+#define INMEMORYCAPACITY 10000
+
 typedef struct {
     int nelems;        /* number of valid entries */
     Tuplesortstate *sortstate;
     Oid valtype;
+    bool inmemory;
+    Datum* datums;
 } StatAggState;
+void initialiseSortState(StatAggState * , FunctionCallInfo );
+StatAggState *initialiseState(FunctionCallInfo);
+void initialiseSortState(StatAggState * aggState, FunctionCallInfo fcinfo){
 
+    Oid collation;
+    Oid sortop;
+    Type t;
+    MemoryContext oldctx;
+    MemoryContext aggcontext;
+    if (!AggCheckCallContext(fcinfo, &aggcontext)) {
+        /* cannot be called directly because of internal-type argument */
+        elog(ERROR, "string_agg_transfn called in non-aggregate context");
+    }
+
+    oldctx = MemoryContextSwitchTo(aggcontext);
+    get_sort_group_operators(aggState->valtype, true, false, false, &sortop, NULL, NULL, NULL);
+
+    t=typeidType(aggState->valtype);
+    collation=typeTypeCollation(t);
+    ReleaseSysCache(t);
+    aggState->sortstate = tuplesort_begin_datum(aggState->valtype, sortop, collation,SORTBY_NULLS_DEFAULT, work_mem, false);
+    MemoryContextSwitchTo(oldctx);
+ }
 
 /*
  * Median state transfer function.
@@ -36,6 +62,35 @@ typedef struct {
  * the median for. On first call, the aggregate state, if any, needs to be
  * initialized.
  */
+
+ StatAggState * initialiseState(FunctionCallInfo fcinfo){
+    MemoryContext oldctx;
+    MemoryContext aggcontext;
+    Oid valtype;
+
+    StatAggState *aggstate;
+    if (!AggCheckCallContext(fcinfo, &aggcontext)) {
+        /* cannot be called directly because of internal-type argument */
+        elog(ERROR, "string_agg_transfn called in non-aggregate context");
+    }
+
+    oldctx = MemoryContextSwitchTo(aggcontext);
+
+    aggstate = (StatAggState *) palloc(sizeof(StatAggState));
+    aggstate->nelems = 0;
+    aggstate->inmemory=false;
+
+    valtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
+    aggstate->valtype=valtype;
+    aggstate->sortstate=NULL;
+    aggstate->datums=palloc(INMEMORYCAPACITY* sizeof(Datum));
+
+    MemoryContextSwitchTo(oldctx);
+
+    return aggstate;
+}
+
+
 Datum
 median_transfn(PG_FUNCTION_ARGS) {
 
@@ -45,36 +100,15 @@ median_transfn(PG_FUNCTION_ARGS) {
 
     if (!PG_ARGISNULL(1)) {
         if (aggstate == NULL){
-            MemoryContext oldctx;
-            MemoryContext aggcontext;
-            Oid sortop;
-            Oid valtype;
-            Type t;
-            Oid collation;
-
-            if (!AggCheckCallContext(fcinfo, &aggcontext)) {
-                /* cannot be called directly because of internal-type argument */
-                elog(ERROR, "string_agg_transfn called in non-aggregate context");
-            }
-
-            oldctx = MemoryContextSwitchTo(aggcontext);
-
-            aggstate = (StatAggState *) palloc(sizeof(StatAggState));
-            aggstate->nelems = 0;
-
-            valtype = get_fn_expr_argtype(fcinfo->flinfo, 1);
-            aggstate->valtype=valtype;
-            get_sort_group_operators(valtype, true, false, false, &sortop, NULL, NULL, NULL);
-
-            t=typeidType(valtype);
-            collation=typeTypeCollation(t);
-            ReleaseSysCache(t);
-            aggstate->sortstate = tuplesort_begin_datum(valtype, sortop, collation,SORTBY_NULLS_DEFAULT, work_mem, false);
-
-            MemoryContextSwitchTo(oldctx);
+            aggstate=initialiseState(fcinfo);
+            initialiseSortState(aggstate,fcinfo);
         }
-        tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
-        aggstate->nelems++;
+        if(aggstate->inmemory){
+
+        }else {
+            tuplesort_putdatum(aggstate->sortstate, PG_GETARG_DATUM(1), false);
+            aggstate->nelems++;
+        }
     }
 
     PG_RETURN_POINTER(aggstate);
