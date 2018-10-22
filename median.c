@@ -49,47 +49,51 @@ typedef struct {
     bool isTuple;
 } StatAggState;
 
-void initialiseSortState(StatAggState * aggState, FunctionCallInfo fcinfo);
-void initialiseSortState(StatAggState * , FunctionCallInfo );
-StatAggState *initialiseState(FunctionCallInfo);
-int partition(RawData* input, int p, int r) ;
-Datum quick_select(RawData* input, int p, int r, int k) ;
+void sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo);
+StatAggState *state_initialise(FunctionCallInfo);
+int partition(RawData* , int , int ) ;
+Datum quick_select(RawData* , int , int , int ) ;
 
 
-int partition(RawData* input, int p, int r) {
-    Datum pivot = input[r].datum;
+int partition(RawData* input, int leftIndex, int rightIndex) {
+    Datum pivot = input[rightIndex].datum;
 
-    while ( p < r )
+    while ( leftIndex < rightIndex )
     {
-        while ( input[p].datum < pivot )
-            p++;
+        while ( input[leftIndex].datum < pivot )
+            leftIndex++;
 
-        while ( input[r].datum > pivot )
-            r--;
+        while ( input[rightIndex].datum > pivot )
+            rightIndex--;
 
-        if ( input[p].datum == input[r].datum )
-            p++;
-        else if ( p < r ) {
-            Datum tmp = input[p].datum;
-            input[p].datum = input[r].datum;
-            input[r].datum = tmp;
+        if ( input[leftIndex].datum == input[rightIndex].datum )
+            leftIndex++;
+        else if ( leftIndex < rightIndex ) {
+            Datum tmp = input[leftIndex].datum;
+            input[leftIndex].datum = input[rightIndex].datum;
+            input[rightIndex].datum = tmp;
         }
     }
 
-    return r;
+    return rightIndex;
 }
 
-Datum quick_select(RawData* input, int p, int r, int k) {
-    int j,length;
-    if ( p == r ) return input[p].datum;
-    j = partition(input, p, r);
-    length = j - p + 1;
-    if ( length == k ) return input[j].datum;
-    else if ( k < length ) return quick_select(input, p, j - 1, k);
-    else  return quick_select(input, j + 1, r, k - length);
+Datum quick_select(RawData* input, int leftIndex, int rightIndex, int center) {
+    int partitionIndex, length;
+    if ( leftIndex == rightIndex ) return input[leftIndex].datum;
+    partitionIndex = partition(input, leftIndex, rightIndex);
+    length = partitionIndex - leftIndex + 1;
+    if ( length == center ) return input[partitionIndex].datum;
+    else if ( center < length ) return quick_select(input, leftIndex, partitionIndex - 1, center);
+    else  return quick_select(input, partitionIndex + 1, rightIndex, center - length);
 }
 
-void initialiseSortState(StatAggState * aggState, FunctionCallInfo fcinfo){
+/*
+ * Initialise the internal state needed for sorting. This function is not needed for pure in-memory processing
+ *
+ */
+
+void sort_state_initialise(StatAggState *aggState, FunctionCallInfo fcinfo){
     Oid collation;
     Oid sortop, eqop,gtop;
     Type t;
@@ -110,10 +114,13 @@ void initialiseSortState(StatAggState * aggState, FunctionCallInfo fcinfo){
     MemoryContextSwitchTo(oldctx);
  }
 
+/*
+ * Initialise the state to be passed between the functions.
+ *
+ */
 
 
-
- StatAggState * initialiseState(FunctionCallInfo fcinfo){
+ StatAggState * state_initialise(FunctionCallInfo fcinfo){
     MemoryContext oldctx;
     MemoryContext aggcontext;
     int16 typlen;
@@ -176,8 +183,8 @@ median_transfn(PG_FUNCTION_ARGS) {
 
     if (!PG_ARGISNULL(1)) {
         if (aggstate == NULL){
-            aggstate=initialiseState(fcinfo);
-            initialiseSortState(aggstate,fcinfo);
+            aggstate=state_initialise(fcinfo);
+            sort_state_initialise(aggstate,fcinfo);
         }
         if(aggstate->inmemory){
             if(aggstate->nelems==INMEMORYCAPACITY){
