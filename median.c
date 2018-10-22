@@ -20,9 +20,18 @@ PG_MODULE_MAGIC;
 /*
  * Source modified from the patch submitted by Pavel Stehule to postgres in Aug 2010.
  */
+
+/*
+ * Registering functions to be visible to Postgres
+ */
 PG_FUNCTION_INFO_V1(median_transfn);
 
 PG_FUNCTION_INFO_V1(median_finalfn);
+
+/*
+ * Capacity of the inmemory buffer to be used.
+ *
+ */
 
 #define INMEMORYCAPACITY 10000
 
@@ -81,7 +90,6 @@ Datum quick_select(RawData* input, int p, int r, int k) {
 }
 
 void initialiseSortState(StatAggState * aggState, FunctionCallInfo fcinfo){
-
     Oid collation;
     Oid sortop, eqop,gtop;
     Type t;
@@ -99,10 +107,6 @@ void initialiseSortState(StatAggState * aggState, FunctionCallInfo fcinfo){
     collation=typeTypeCollation(t);
     ReleaseSysCache(t);
     aggState->sortstate = tuplesort_begin_datum(aggState->valtype, sortop, collation,SORTBY_NULLS_DEFAULT, work_mem, false);
-
-
-
-
     MemoryContextSwitchTo(oldctx);
  }
 
@@ -146,6 +150,7 @@ void initialiseSortState(StatAggState * aggState, FunctionCallInfo fcinfo){
     get_typlenbyval(aggstate->valtype, &typlen,&typbyval);
     aggstate->isTuple=!typbyval;
     aggstate->sortstate=NULL;
+    aggstate->rawData=NULL;
     if(aggstate->inmemory)
         aggstate->rawData =palloc(INMEMORYCAPACITY* sizeof(RawData));
 
@@ -271,6 +276,9 @@ median_finalfn(PG_FUNCTION_ARGS) {
 
         }
         tuplesort_end(aggstate->sortstate);
+        if(aggstate->rawData!=NULL){
+            pfree(aggstate->rawData);
+        }
         PG_RETURN_DATUM(result);
     } else
         PG_RETURN_NULL();
