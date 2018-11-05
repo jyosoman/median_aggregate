@@ -1,10 +1,4 @@
-# Coding assignment: Median aggregate
-
-The task of thi coding assignment is to implement an aggregate
-function that calculates the *median* over an input set (typically
-values from a table). Documentation on how to create aggregates can be
-found in the official PostgreSQL documentation under [User-defined
-Aggregates](https://www.postgresql.org/docs/current/static/xaggr.html)
+#Median aggregate
 
 
 A typical median query is:
