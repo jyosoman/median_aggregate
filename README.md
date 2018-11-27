@@ -27,5 +27,4 @@ Tests can be run with
 > make installcheck
 ```
 
-A few tests are provided with the coding assignement. All of these
-tests should pass as is. Feel free to add additional tests.
+
